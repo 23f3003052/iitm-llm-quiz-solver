@@ -133,7 +133,7 @@ async def scrape_secret(question: str, url: str, email: str) -> str:
         
         print(f"  Scraping: {scrape_url}")
         
-        # Use Playwright to render the scrape page
+        # Use Playwright to render
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
@@ -146,34 +146,49 @@ async def scrape_secret(question: str, url: str, email: str) -> str:
             
             await browser.close()
         
-        print(f"  Content: {text[:150]}...")
+        print(f"  Full content:\n{text[:300]}...")
         
-        # Look for secret
-        patterns = [
-            r'<!--\s*([A-Za-z0-9_\-]{6,})\s*-->',
-            r'<div[^>]*id=["\']secret["\'][^>]*>([^<]+)</div>',
-            r'data-secret=["\']([^"\']+)["\']',
-            r'"secret"\s*:\s*"([^"]+)"',
-            r'Secret[:\s]+([A-Za-z0-9_\-]{6,})',
-        ]
+        # Look for "Secret code is XXXX" pattern
+        m = re.search(r'Secret\s+code\s+is\s+([0-9a-zA-Z_\-]+)', text, re.IGNORECASE)
+        if m:
+            secret = m.group(1).strip()
+            print(f"  ✅ Found secret: {secret}")
+            return secret
         
-        for pattern in patterns:
-            m = re.search(pattern, html, re.IGNORECASE)
-            if m:
-                secret = m.group(1).strip()
-                print(f"  Found: {secret}")
-                return secret
+        # Look for "code: XXXX" pattern
+        m = re.search(r'code[:\s]+([0-9a-zA-Z_\-]+)', text, re.IGNORECASE)
+        if m:
+            secret = m.group(1).strip()
+            print(f"  ✅ Found code: {secret}")
+            return secret
         
-        # Last resort: extract any substantial string
-        words = re.findall(r'\b[A-Za-z0-9_\-]{8,20}\b', text)
-        for w in words:
-            if w.lower() not in ['email', 'secret', 'password', 'answer', 'your', 'submit']:
-                print(f"  Using: {w}")
-                return w
+        # Look in HTML comments
+        m = re.search(r'<!--\s*([0-9a-zA-Z_\-]{6,})\s*-->', html, re.IGNORECASE)
+        if m:
+            secret = m.group(1).strip()
+            print(f"  ✅ Found in comment: {secret}")
+            return secret
         
+        # Look for data attributes
+        m = re.search(r'data-secret=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if m:
+            secret = m.group(1).strip()
+            print(f"  ✅ Found in data attr: {secret}")
+            return secret
+        
+        # Last resort: extract any number
+        numbers = re.findall(r'\b\d{4,}\b', text)
+        if numbers:
+            print(f"  ✅ Using number: {numbers[0]}")
+            return numbers[0]
+        
+        print(f"  ❌ No secret pattern found")
         return "not_found"
+    
     except Exception as e:
         print(f"  Error: {e}")
+        import traceback
+        traceback.print_exc()
         return "error"
 
 async def parse_csv(question: str, url: str, email: str) -> str:
@@ -183,38 +198,54 @@ async def parse_csv(question: str, url: str, email: str) -> str:
         cutoff = int(m.group(1)) if m else 0
         print(f"  Cutoff: {cutoff}")
         
-        # Find CSV URL - try multiple patterns
+        # Strategy 1: Look for CSV URL in question
         csv_url = None
-        
-        # Pattern 1: Direct URL in question
         m = re.search(r'(https?://[^\s<>"\']+\.csv[^\s<>"\']*)', question, re.IGNORECASE)
         if m:
             csv_url = m.group(1)
+            print(f"  Found CSV URL in question: {csv_url}")
         
-        # Pattern 2: Link in question
-        m = re.search(r'href=["\']([^"\']+\.csv[^"\']*)', question, re.IGNORECASE)
-        if m:
-            relative = m.group(1)
-            domain = re.match(r'(https?://[^/]+)', url).group(1)
-            csv_url = domain + relative if relative.startswith('/') else domain + '/' + relative
-        
-        # Pattern 3: Relative path
+        # Strategy 2: Look for data file link
         if not csv_url:
-            m = re.search(r'(\/[a-z\-0-9]+\.csv[^\s<>"\']*)', question, re.IGNORECASE)
+            m = re.search(r'href=["\']([^"\']+\.csv[^"\']*)', question, re.IGNORECASE)
             if m:
+                relative = m.group(1)
                 domain = re.match(r'(https?://[^/]+)', url).group(1)
-                csv_url = domain + m.group(1)
+                csv_url = domain + relative if relative.startswith('/') else domain + '/' + relative
+                print(f"  Found CSV in href: {csv_url}")
         
-        # Pattern 4: Look in URL for data file
+        # Strategy 3: Try common patterns for data files
         if not csv_url:
-            base = url.split('?')[0]
-            csv_url = base.replace('demo-audio', 'data-q') + '.csv'
+            base = url.split('?')[0]  # Remove query params
+            # Try replacing page name with data file
+            base_domain = re.match(r'(https?://[^/]+)', url).group(1)
+            
+            # Pattern: demo-audio -> data-q-audio.csv
+            page_name = base.split('/')[-1]
+            variants = [
+                f"{base_domain}/data-{page_name}.csv",
+                f"{base_domain}/data.csv",
+                f"{base_domain}/data-q.csv",
+                base.replace(page_name, 'data.csv'),
+            ]
+            
+            for variant in variants:
+                print(f"  Trying: {variant}")
+                try:
+                    async with httpx.AsyncClient(timeout=5) as client:
+                        resp = await client.head(variant)
+                        if resp.status_code == 200:
+                            csv_url = variant
+                            print(f"  ✅ Found: {csv_url}")
+                            break
+                except:
+                    pass
         
         if not csv_url:
-            print(f"  No CSV URL found")
+            print(f"  ⚠️  No CSV URL found")
             return "0"
         
-        print(f"  CSV URL: {csv_url}")
+        print(f"  Fetching: {csv_url}")
         
         # Fetch CSV
         async with httpx.AsyncClient() as client:
@@ -222,25 +253,33 @@ async def parse_csv(question: str, url: str, email: str) -> str:
             csv_text = resp.text
         
         print(f"  Fetched {len(csv_text)} bytes")
+        print(f"  CSV preview: {csv_text[:200]}...")
         
-        # Parse
+        # Parse CSV
         reader = csv.reader(StringIO(csv_text))
         total = 0
+        count = 0
+        
         for row in reader:
             for cell in row:
                 try:
                     val = float(cell)
                     if val > cutoff:
                         total += val
+                        count += 1
+                        print(f"    Added {val} (>{cutoff})")
                 except:
                     pass
         
-        print(f"  Sum: {int(total)}")
+        print(f"  Total sum: {int(total)} (count: {count})")
         return str(int(total))
     
     except Exception as e:
         print(f"  CSV Error: {e}")
+        import traceback
+        traceback.print_exc()
         return "0"
+
 
 async def submit(email: str, secret: str, url: str, answer: str, submit_url: str) -> dict:
     payload = {"email": email, "secret": secret, "url": url, "answer": answer}
@@ -255,3 +294,69 @@ async def submit(email: str, secret: str, url: str, answer: str, submit_url: str
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+#NEW
+
+async def solve(question: str, url: str, page_data: dict, email: str) -> str:
+    q = question.lower()
+    
+    # Project 2 challenges
+    
+    # UV command challenge
+    if "uv http" in q and "command string" in q:
+        print("  🔧 UV HTTP command challenge")
+        return await generate_uv_command(question, url, email)
+    
+    # Original demo challenges
+    if "scrape" in q:
+        print("  🔍 Scraping question")
+        return await scrape_secret(question, url, email)
+    
+    if "secret" in q and "scrape" not in q:
+        print("  🔍 Secret extraction")
+        return await scrape_secret(question, url, email)
+    
+    if "csv" in q or "cutoff" in q:
+        print("  📊 CSV question")
+        return await parse_csv(question, url, email)
+    
+    if "pdf" in q or ("download" in q and "file" in q):
+        print("  📄 PDF question")
+        return "0"
+    
+    print("  ❓ Generic question")
+    return "anything you want"
+
+async def generate_uv_command(question: str, url: str, email: str) -> str:
+    """Generate uv http command string"""
+    try:
+        # Extract the URL pattern from question
+        # Pattern: "uv http get on https://...?email=<your email>"
+        m = re.search(r'uv\s+http\s+(\w+)\s+on\s+(https?://[^\s<>"\']+)', question, re.IGNORECASE)
+        if not m:
+            print(f"  ⚠️  Could not parse uv command format")
+            return "uv http get https://example.com"
+        
+        method = m.group(1)  # "get", "post", etc.
+        api_url = m.group(2).replace('<your email>', email)
+        
+        print(f"  Method: {method}")
+        print(f"  URL: {api_url}")
+        
+        # Look for headers in question
+        headers = []
+        if "Accept: application/json" in question:
+            headers.append('-H "Accept: application/json"')
+        
+        # Build command string
+        if headers:
+            command = f'uv http {method} {api_url} {" ".join(headers)}'
+        else:
+            command = f'uv http {method} {api_url}'
+        
+        print(f"  Command: {command}")
+        return command
+    
+    except Exception as e:
+        print(f"  Error: {e}")
+        return "uv http get https://example.com"
