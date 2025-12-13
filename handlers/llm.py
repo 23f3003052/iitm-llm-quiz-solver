@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 # Set up logging
 logger = logging.getLogger(__name__)
 
-async def handler(question):
+async def handler(question, url=None):
     """
     Process the question using an LLM.
     1. Detects if an OpenAI key or Proxy Token is used.
