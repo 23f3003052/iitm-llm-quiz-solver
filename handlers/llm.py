@@ -12,7 +12,7 @@ async def handler(question: str, url: str) -> str:
     
     try:
         # 1. Setup OpenAI Client
-        token = os.environ.get("AIPROXY_TOKEN") or os.environ.get("OPENAI_API_KEY")
+        token = os.environ.get("OPENAI_API_KEY") or os.environ.get("AIPROXY_TOKEN")
         if not token:
             logger.error("❌ No API Token found (AIPROXY_TOKEN or OPENAI_API_KEY)")
             return "Error: No API Token"
