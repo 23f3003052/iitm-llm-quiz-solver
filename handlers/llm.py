@@ -89,7 +89,7 @@ async def handler(question: str, url: str) -> str:
         
         user_content += "Answer:"
 
-        # 4. Call the LLM
+                # 4. Call the LLM
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -97,20 +97,20 @@ async def handler(question: str, url: str) -> str:
                 {"role": "user", "content": user_content}
             ],
             max_tokens=300,
-            temperature=0.1  # Low temperature for deterministic/factual answers
+            temperature=0.1
         )
 
-        answer = response.choices.message.content.strip()
+        # FIXED: Access choices as a list
+        answer = response.choices[0].message.content.strip()
         
-        # 5. Clean the answer (Remove markdown fences if LLM ignores instructions)
-        # e.g., ```bash ... ```
+        # 5. Clean the answer (Remove markdown fences)
         if answer.startswith("```"):
             lines = answer.split('\n')
             if len(lines) >= 2:
-                # Strip first line if it starts with ```
+                # FIXED: Access first element of list
                 if lines.startswith("```"):
                     lines = lines[1:]
-                # Strip last line if it starts with ```
+                # FIXED: Access last element of list
                 if lines and lines[-1].strip().startswith("```"):
                     lines = lines[:-1]
                 answer = "\n".join(lines).strip()
