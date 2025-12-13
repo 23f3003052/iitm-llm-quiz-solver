@@ -3,7 +3,7 @@ import io
 import json
 import re
 import httpx
-import dateutil.parser
+from datetime import datetime
 
 async def handler(question: str, url: str) -> str:
     try:
@@ -30,25 +30,35 @@ async def handler(question: str, url: str) -> str:
         for row in reader:
             new_row = {}
             for k, v in row.items():
-                new_key = k.strip().lower()
+                # Snake case key: "Full Name" -> "full_name"
+                new_key = k.strip().lower().replace(" ", "_")
                 val = v.strip()
                 
-                if new_key == 'id' or new_key == 'value':
+                # Integer columns
+                if new_key in ['id', 'value', 'salary', 'age', 'count']:
                     try:
                         new_row[new_key] = int(val)
                     except:
-                        new_row[new_key] = val # Fallback
-                elif new_key == 'joined':
+                        new_row[new_key] = val
+                
+                # Date columns (common formats)
+                elif new_key in ['joined', 'date', 'signup_date']:
                     try:
-                        dt = dateutil.parser.parse(val, dayfirst=True)
+                        # Try YYYY-MM-DD
+                        dt = datetime.strptime(val, '%Y-%m-%d')
                         new_row[new_key] = dt.strftime('%Y-%m-%d')
                     except:
-                        new_row[new_key] = val
+                        try:
+                            # Try DD/MM/YYYY
+                            dt = datetime.strptime(val, '%d/%m/%Y')
+                            new_row[new_key] = dt.strftime('%Y-%m-%d')
+                        except:
+                            new_row[new_key] = val
                 else:
                     new_row[new_key] = val
             data.append(new_row)
             
-        # Sort by id
+        # Sort by id just in case
         data.sort(key=lambda x: x.get('id', 0))
         
         return json.dumps(data)

@@ -2,7 +2,7 @@ import logging
 from handlers import (
     uv_cmd, git_cmd, literal_path, image_color, 
     csv_normalize, csv_sum, github_tree, logs_zip, 
-    scrape, generic
+    scrape, generic, audio  # <--- Added audio
 )
 
 async def route_and_solve(question: str, url: str, page_data: dict, email: str) -> str:
@@ -21,6 +21,10 @@ async def route_and_solve(question: str, url: str, page_data: dict, email: str) 
     # 3. Image Tasks
     if "heatmap" in q or "color" in q or ".png" in q:
         return await image_color.handler(question, url)
+    
+    # NEW: Audio Tasks
+    if "audio" in q or "listen" in q or ".opus" in q or ".mp3" in q:
+        return await audio.handler(question, url)
         
     # 4. CSV Tasks
     if "normalize" in q and "json" in q:
