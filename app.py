@@ -1,9 +1,13 @@
 # app.py
 import logging
 import os
+import subprocess
+import sys
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
+
 
 # Import our core logic
 from core.fetch import fetch_page
@@ -16,7 +20,19 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Install Playwright browsers
+    logger.info("Checking Playwright browsers...")
+    try:
+        subprocess.run(["playwright", "install", "chromium"], check=True)
+        logger.info("Playwright browsers installed.")
+    except Exception as e:
+        logger.error(f"Failed to install browsers: {e}")
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
 
 class QuizRequest(BaseModel):
     email: str
